@@ -134,7 +134,8 @@ def restart_as_admin() -> bool:
         return False
     import ctypes
     exe = sys.executable
-    args = "" if getattr(sys, "frozen", False) else " ".join(f'"{a}"' for a in sys.argv)
+    base = [] if getattr(sys, "frozen", False) else sys.argv[:1]
+    args = " ".join(f'"{a}"' for a in base + ["--restarted"])
     return ctypes.windll.shell32.ShellExecuteW(None, "runas", exe, args, None, 1) > 32
 
 

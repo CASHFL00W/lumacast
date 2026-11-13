@@ -137,7 +137,7 @@ def install_and_restart(new_exe: Path) -> None:
         "goto end\r\n"
         ":ok\r\n"
         "echo Ersetzt >> \"%LOG%\"\r\n"
-        "start \"\" \"%EXE%\"\r\n"
+        "start \"\" \"%EXE%\" --restarted\r\n"
         ":end\r\n"
         "endlocal\r\n"
         "(goto) 2>nul & del \"%~f0\"\r\n",

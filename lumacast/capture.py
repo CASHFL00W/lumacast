@@ -12,6 +12,9 @@ from .config import TEST_PATTERN
 
 FORMATS = {"YUY2": "YUY2", "NV12": "NV12", "MJPG": "MJPG"}
 
+LOST_SIGNAL = ("Kein Bild von der Capture-Karte – verbinde neu … Prüfen: Konsole an? Karte von einem "
+               "anderen Programm belegt (OBS, Kamera-App, zweites LumaCast)? HDCP an der PS5 aus?")
+
 
 def list_video_devices() -> list[str]:
     """Namen der Videogeräte in DirectShow-Reihenfolge (= OpenCV-Index)."""
@@ -148,7 +151,7 @@ class CaptureThread(threading.Thread):
         devices = list_video_devices()
         index = devices.index(name) if name in devices else 0
         if not devices and sys.platform == "win32":
-            raise RuntimeError("Keine Capture-Karte gefunden. Ist sie angeschlossen (USB 3)?")
+            raise RuntimeError("Keine Capture-Karte gefunden – ist sie angeschlossen (USB 3)?")
 
         wanted = c.get("format", "Auto")
         candidates = [wanted] if wanted in FORMATS else ["YUY2", "NV12", "MJPG", None]
@@ -176,17 +179,50 @@ class CaptureThread(threading.Thread):
         if best:
             self.info = f"{best[1]} {best[3][0]}x{best[3][1]}"
             return best[0]
-        raise RuntimeError(f"Capture-Gerät „{name or index}“ konnte nicht geöffnet werden. "
-                           "Läuft es evtl. noch in OBS oder einem anderen Programm?")
+        raise RuntimeError(f"Capture-Gerät „{name or index}“ konnte nicht geöffnet werden – "
+                           "evtl. noch in OBS, der Kamera-App oder einem zweiten LumaCast geöffnet")
 
     # ---------------------------------------------------------------- Schleife
+    def _release(self):
+        if self._source is not None:
+            try:
+                self._source.release()
+            except Exception:
+                pass
+        self._source = None
+
+    def _set_error(self, msg: str):
+        self.error = msg
+        self.fps = 0.0
+        self.new_frame.set()
+
     def run(self):
-        try:
-            self._source = self._open()
-        except Exception as exc:  # noqa: BLE001
-            self.error = str(exc)
-            self.new_frame.set()
-            return
+        """Liest dauerhaft Bilder. Bricht das Signal ab, wird die Karte automatisch neu geöffnet."""
+        attempt = 0
+        while self.running:
+            try:
+                self._source = self._open()
+            except Exception as exc:  # noqa: BLE001
+                attempt += 1
+                self._set_error(f"{exc} (neuer Versuch läuft …)")
+                self._sleep(2.0)
+                continue
+            attempt = 0
+            if self.error:
+                self.error = ""
+                self.new_frame.set()
+            self._read_loop()
+            self._release()
+            if self.running:
+                self._set_error(LOST_SIGNAL)
+                self._sleep(1.5)
+
+    def _sleep(self, seconds: float):
+        end = time.perf_counter() + seconds
+        while self.running and time.perf_counter() < end:
+            time.sleep(0.05)
+
+    def _read_loop(self):
         last = time.perf_counter()
         count = 0
         fails = 0
@@ -196,12 +232,12 @@ class CaptureThread(threading.Thread):
             if not ok or frame is None:
                 fails += 1
                 if fails > 120:
-                    self.error = "Capture-Signal verloren."
-                    self.new_frame.set()
-                    break
+                    return
                 time.sleep(0.005)
                 continue
             fails = 0
+            if self.error:
+                self.error = ""
             with self.lock:
                 self.frame = frame
                 self.frame_time = now
@@ -213,10 +249,6 @@ class CaptureThread(threading.Thread):
                 self.fps = count / (now - last)
                 count = 0
                 last = now
-        try:
-            self._source.release()
-        except Exception:
-            pass
 
     def latest(self):
         with self.lock:

@@ -568,6 +568,12 @@ class Renderer:
                 self.toast = (cap.error, time.perf_counter() + 1e9)
                 self.overlay_dirty = True
                 self.dirty = True
+            elif error_shown and not cap.error:
+                error_shown = ""
+                self.send("info", msg="Bild von der Capture-Karte ist wieder da.")
+                self.toast = ("Signal wieder da", time.perf_counter() + 1.5)
+                self.overlay_dirty = True
+                self.dirty = True
 
             if new:
                 if last_seq >= 0 and seq - last_seq > 1:

@@ -9,7 +9,7 @@ import uuid
 from pathlib import Path
 
 APP_NAME = "LumaCast"
-APP_VERSION = "1.1.1"
+APP_VERSION = "1.1.2"
 
 TEST_PATTERN = "Testbild (ohne Capture-Karte)"
 DEFAULT_AUDIO = "Standard"

@@ -68,6 +68,76 @@ def is_running() -> bool:
         return False
 
 
+def _pid() -> int | None:
+    if sys.platform != "win32":
+        return None
+    try:
+        out = subprocess.run(["tasklist", "/FI", f"IMAGENAME eq {EXE_NAME}", "/FO", "CSV", "/NH"],
+                             capture_output=True, text=True, creationflags=_NO_WINDOW, timeout=5).stdout
+        for line in out.splitlines():
+            parts = [p.strip('"') for p in line.split('","')]
+            if len(parts) > 1 and parts[0].lower() == EXE_NAME.lower():
+                return int(parts[1])
+    except Exception:
+        pass
+    return None
+
+
+def self_is_admin() -> bool:
+    if sys.platform != "win32":
+        return False
+    try:
+        import ctypes
+        return bool(ctypes.windll.shell32.IsUserAnAdmin())
+    except Exception:
+        return False
+
+
+def is_elevated() -> bool:
+    """True, wenn Lossless Scaling mit Administratorrechten läuft."""
+    pid = _pid()
+    if pid is None:
+        return False
+    import ctypes
+    from ctypes import wintypes
+    k32 = ctypes.windll.kernel32
+    adv = ctypes.windll.advapi32
+    handle = k32.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
+    if not handle:
+        return True  # kein Zugriff -> läuft mit höheren Rechten
+    try:
+        token = wintypes.HANDLE()
+        if not adv.OpenProcessToken(handle, 0x0008, ctypes.byref(token)):  # TOKEN_QUERY
+            return True
+        try:
+            elevation = wintypes.DWORD()
+            size = wintypes.DWORD()
+            ok = adv.GetTokenInformation(token, 20, ctypes.byref(elevation), ctypes.sizeof(elevation),
+                                         ctypes.byref(size))  # TokenElevation
+            return bool(ok and elevation.value)
+        finally:
+            k32.CloseHandle(token)
+    finally:
+        k32.CloseHandle(handle)
+
+
+def hotkey_blocked() -> bool:
+    """Windows blockiert Tastendrücke an Programme mit höheren Rechten."""
+    try:
+        return is_elevated() and not self_is_admin()
+    except Exception:
+        return False
+
+
+def restart_as_admin() -> bool:
+    if sys.platform != "win32":
+        return False
+    import ctypes
+    exe = sys.executable
+    args = "" if getattr(sys, "frozen", False) else " ".join(f'"{a}"' for a in sys.argv)
+    return ctypes.windll.shell32.ShellExecuteW(None, "runas", exe, args, None, 1) > 32
+
+
 def launch(path: str) -> str:
     """Startet Lossless Scaling, falls nötig. Gibt eine Fehlermeldung oder '' zurück."""
     if is_running():
@@ -110,9 +180,12 @@ def send_hotkey(combo: str) -> bool:
         return False
     user32 = ctypes.windll.user32
     for k in keys:
-        user32.keybd_event(k, 0, 0, 0)
-        time.sleep(0.02)
+        scan = user32.MapVirtualKeyW(k, 0)
+        user32.keybd_event(k, scan, 0, 0)
+        time.sleep(0.03)
+    time.sleep(0.05)
     for k in reversed(keys):
-        user32.keybd_event(k, 0, 2, 0)  # KEYEVENTF_KEYUP
-        time.sleep(0.02)
+        scan = user32.MapVirtualKeyW(k, 0)
+        user32.keybd_event(k, scan, 2, 0)  # KEYEVENTF_KEYUP
+        time.sleep(0.03)
     return True

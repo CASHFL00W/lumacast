@@ -472,7 +472,39 @@ class App(ctk.CTk):
                     "wichtig bei 30-FPS-Spielen: nur echte neue Bilder ausgeben")
         self.entry(sec, "Hotkey", "framegen", "hotkey", width=180)
         self.slider(sec, "Wartezeit", "framegen", "delay", 0.5, 10.0, steps=19, fmt="{:.1f} s", cast=float)
+        r = sec._next_row
+        sec._next_row += 1
+        btns = ctk.CTkFrame(sec, fg_color="transparent")
+        btns.grid(row=r, column=1, columnspan=2, padx=(0, 16), pady=(8, 14), sticky="w")
+        ctk.CTkButton(btns, text="Jetzt in Lossless Scaling aktivieren", fg_color=ACCENT, hover_color=ACCENT_HOVER,
+                      text_color="#111111", command=self.activate_lossless).pack(side="left", padx=(0, 8))
+        ctk.CTkButton(btns, text="LumaCast als Administrator neu starten", fg_color="#2b303b",
+                      hover_color="#3a404d", command=self.restart_admin).pack(side="left")
         self.refreshers.append(self.update_ls_status)
+
+    def activate_lossless(self):
+        if not self.is_running():
+            self.set_status("Erst die Ausgabe starten, dann Lossless Scaling aktivieren.", error=True)
+            return
+        if not lossless.is_running():
+            path = lossless.find_lossless(self.profile["framegen"].get("ls_path", ""))
+            err = lossless.launch(path)
+            if err:
+                self.set_status(err, error=True)
+                return
+        try:
+            self.cmd_q.put_nowait({"type": "ls_hotkey"})
+        except Exception:
+            pass
+
+    def restart_admin(self):
+        if lossless.self_is_admin():
+            self.set_status("LumaCast läuft bereits als Administrator.")
+            return
+        if lossless.restart_as_admin():
+            self.on_close()
+        else:
+            self.set_status("Neustart als Administrator abgebrochen.", error=True)
 
     def browse_ls(self):
         path = filedialog.askopenfilename(title="LosslessScaling.exe auswählen",
@@ -685,6 +717,8 @@ class App(ctk.CTk):
                              f"Spiel {msg.get('game_fps', '?')} FPS   │   "
                              f"Ausgabe {msg['out_fps']} FPS   │   Latenz {msg['latency']} ms   │   "
                              f"verworfen {msg['dropped']}")
+                elif kind == "info":
+                    self.set_status(msg.get("msg", ""))
                 elif kind in ("error", "warning"):
                     self._had_error = self._had_error or kind == "error"
                     self.set_status(msg.get("msg", ""), error=kind == "error")

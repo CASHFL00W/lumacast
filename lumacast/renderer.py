@@ -174,6 +174,8 @@ class Renderer:
         self.autotune = AutoTuner()
         self.dups = DuplicateDetector()
         self.audio = None
+        self.hotkey_at = None
+        self.hotkey_pending = False
         self.overlay_dirty = True
 
     # ----------------------------------------------------------------- Status
@@ -477,6 +479,8 @@ class Renderer:
             kind = cmd.get("type")
             if kind == "stop":
                 self.running = False
+            elif kind == "ls_hotkey":
+                self.hotkey_at = time.perf_counter() + 0.1
             elif kind == "update":
                 new = cmd["profile"]
                 for section in ("image", "upscale"):
@@ -528,9 +532,9 @@ class Renderer:
                 audio_note = self.audio.error
                 self.send("warning", msg=audio_note)
 
-        hotkey_at = None
-        if fg.get("lossless") and fg.get("send_hotkey") and fg.get("hotkey"):
-            hotkey_at = time.perf_counter() + float(fg.get("delay", 2.0))
+        # Hotkey erst senden, wenn wirklich Bilder kommen (Capture-Start kann dauern)
+        self.hotkey_at = None
+        self.hotkey_pending = bool(fg.get("lossless") and fg.get("send_hotkey") and fg.get("hotkey"))
 
         glfw = self.glfw
         last_seq = -1
@@ -549,13 +553,9 @@ class Renderer:
             glfw.poll_events()
             self.handle_commands()
 
-            if hotkey_at and time.perf_counter() >= hotkey_at:
-                hotkey_at = None
-                glfw.focus_window(self.win)
-                combo = fg.get("hotkey", "ctrl+alt+s")
-                threading.Thread(target=lambda: (time.sleep(0.3), lossless.send_hotkey(combo)),
-                                 daemon=True).start()
-                self.show_toast(f"Lossless Scaling: {combo.upper()} gesendet")
+            if self.hotkey_at and time.perf_counter() >= self.hotkey_at:
+                self.hotkey_at = None
+                self.trigger_lossless()
 
             cap.new_frame.wait(0.004)
             cap.new_frame.clear()
@@ -614,6 +614,10 @@ class Renderer:
                 self.update_overlay(cap, out_fps, latency_ms, dropped, audio_note)
                 self.dirty = True
 
+            if self.hotkey_pending and last_seq >= 0:
+                self.hotkey_pending = False
+                self.hotkey_at = time.perf_counter() + float(fg.get("delay", 2.0))
+
             if new or self.dirty:
                 self.render(frame if new else None)
                 glfw.swap_buffers(self.win)
@@ -629,6 +633,35 @@ class Renderer:
         glfw.destroy_window(self.win)
         glfw.terminate()
         self.send("closed")
+
+    def trigger_lossless(self):
+        """Ausgabefenster nach vorne holen und den Skalier-Hotkey von Lossless Scaling drücken."""
+        combo = self.profile["framegen"].get("hotkey", "ctrl+alt+s") or "ctrl+alt+s"
+        if lossless.hotkey_blocked():
+            msg = ("Lossless Scaling läuft als Administrator – Windows blockiert den Hotkey. "
+                   "LumaCast als Administrator starten oder im Ausgabefenster selbst "
+                   f"{combo.upper()} drücken.")
+            self.send("warning", msg=msg)
+            self.show_toast("LS läuft als Admin: bitte " + combo.upper() + " selbst drücken")
+            return
+        if not lossless.is_running():
+            self.send("warning", msg="Lossless Scaling läuft nicht – bitte starten.")
+            self.show_toast("Lossless Scaling läuft nicht")
+            return
+        glfw = self.glfw
+        glfw.restore_window(self.win)
+        glfw.focus_window(self.win)
+        if sys.platform == "win32":
+            try:
+                import ctypes
+                hwnd = glfw.get_win32_window(self.win)
+                ctypes.windll.user32.SetForegroundWindow(hwnd)
+            except Exception:
+                pass
+        threading.Thread(target=lambda: (time.sleep(0.4), lossless.send_hotkey(combo)), daemon=True).start()
+        self.show_toast(f"Lossless Scaling: {combo.upper()} gesendet")
+        self.send("info", msg=f"{combo.upper()} an Lossless Scaling gesendet. Oben links sollte jetzt "
+                              "die LS-FPS-Anzeige erscheinen (falls „Draw FPS“ an ist).")
 
     def update_overlay(self, cap, out_fps, latency_ms, dropped, audio_note):
         lines = []

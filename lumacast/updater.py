@@ -114,6 +114,24 @@ def download(info: dict, progress=None, cancelled=None) -> Path:
     return target
 
 
+def clean_environment() -> dict:
+    """Umgebung ohne PyInstaller-Variablen der laufenden .exe.
+    Sonst sucht die neu gestartete .exe ihre Dateien im Temp-Ordner der alten Instanz,
+    der beim Beenden gelöscht wird („Failed to load Python DLL“)."""
+    env = dict(os.environ)
+    mei = getattr(sys, "_MEIPASS", None)
+    for key in list(env):
+        if key.startswith("_PYI_") or key in ("_MEIPASS2", "TCL_LIBRARY", "TK_LIBRARY"):
+            env.pop(key, None)
+        elif mei and mei.lower() in env[key].lower() and key.upper() != "PATH":
+            env.pop(key, None)
+    if mei and "PATH" in env:
+        env["PATH"] = os.pathsep.join(p for p in env["PATH"].split(os.pathsep)
+                                      if mei.lower() not in p.lower())
+    env["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
+    return env
+
+
 def install_and_restart(new_exe: Path) -> None:
     """Startet ein kleines Skript, das nach dem Beenden die .exe ersetzt und neu startet.
     Danach muss das Programm sich selbst beenden."""
@@ -146,7 +164,7 @@ def install_and_restart(new_exe: Path) -> None:
     # Äußere Anführungszeichen, damit cmd /c auch Pfade mit Leerzeichen korrekt liest
     cmdline = f'cmd.exe /c ""{script}" "{new_exe}" "{current}" "{log}""'
     subprocess.Popen(cmdline, creationflags=_NO_WINDOW | _DETACHED, close_fds=True,
-                     cwd=tempfile.gettempdir())
+                     cwd=tempfile.gettempdir(), env=clean_environment())
 
 
 def cleanup_leftovers() -> None:

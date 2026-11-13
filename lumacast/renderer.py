@@ -568,6 +568,10 @@ class Renderer:
                 self.toast = (cap.error, time.perf_counter() + 1e9)
                 self.overlay_dirty = True
                 self.dirty = True
+            elif cap.notice and cap.notice != getattr(self, "_notice_shown", ""):
+                self._notice_shown = cap.notice
+                self.send("warning", msg=cap.notice)
+                self.show_toast("Ersatz-Modus 1080p60 – Einstellung nicht unterstützt")
             elif error_shown and not cap.error:
                 error_shown = ""
                 self.send("info", msg="Bild von der Capture-Karte ist wieder da.")

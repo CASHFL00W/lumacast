@@ -12,6 +12,8 @@ from .config import TEST_PATTERN
 
 FORMATS = {"YUY2": "YUY2", "NV12": "NV12", "MJPG": "MJPG"}
 
+FALLBACK_MODE = (1920, 1080, 60)
+
 LOST_SIGNAL = ("Kein Bild von der Capture-Karte – verbinde neu … Prüfen: Konsole an? Karte von einem "
                "anderen Programm belegt (OBS, Kamera-App, zweites LumaCast)? HDCP an der PS5 aus?")
 
@@ -138,12 +140,20 @@ class CaptureThread(threading.Thread):
         self.fps = 0.0
         self.size = (0, 0)
         self._source = None
+        self.use_fallback = False
+        self.notice = ""
+        self.frames_this_session = 0
 
     # ---------------------------------------------------------------- öffnen
     def _open(self):
         c = self.cfg
         w, h, fps = int(c["width"]), int(c["height"]), int(c["fps"])
         name = c.get("device") or ""
+        if self.use_fallback and (w, h, fps) != FALLBACK_MODE:
+            self.notice = (f"Die Capture-Karte liefert bei {w}x{h} @ {fps} FPS kein Bild – "
+                           f"LumaCast nutzt stattdessen {FALLBACK_MODE[0]}x{FALLBACK_MODE[1]} @ "
+                           f"{FALLBACK_MODE[2]} FPS. Bitte im Reiter Video anpassen.")
+            w, h, fps = FALLBACK_MODE
         if name == TEST_PATTERN or (sys.platform != "win32" and not name):
             self.info = "Testbild"
             return TestPattern(w, h, fps)
@@ -179,6 +189,9 @@ class CaptureThread(threading.Thread):
         if best:
             self.info = f"{best[1]} {best[3][0]}x{best[3][1]}"
             return best[0]
+        if not self.use_fallback and (w, h, fps) != FALLBACK_MODE:
+            self.use_fallback = True
+            return self._open()
         raise RuntimeError(f"Capture-Gerät „{name or index}“ konnte nicht geöffnet werden – "
                            "evtl. noch in OBS, der Kamera-App oder einem zweiten LumaCast geöffnet")
 
@@ -211,8 +224,13 @@ class CaptureThread(threading.Thread):
             if self.error:
                 self.error = ""
                 self.new_frame.set()
+            self.frames_this_session = 0
             self._read_loop()
             self._release()
+            if self.running and self.frames_this_session == 0 and not self.use_fallback:
+                # Modus wird angenommen, liefert aber nichts -> nächstes Mal 1080p60
+                self.use_fallback = True
+                continue
             if self.running:
                 self._set_error(LOST_SIGNAL)
                 self._sleep(1.5)
@@ -236,6 +254,7 @@ class CaptureThread(threading.Thread):
                 time.sleep(0.005)
                 continue
             fails = 0
+            self.frames_this_session += 1
             if self.error:
                 self.error = ""
             with self.lock:

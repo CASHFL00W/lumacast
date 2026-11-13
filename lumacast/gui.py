@@ -423,7 +423,10 @@ class App(ctk.CTk):
                             "LumaCast das Programm „Lossless Scaling“ (separat auf Steam zu kaufen). LumaCast "
                             "startet es mit, öffnet die Ausgabe als randloses Fenster und drückt nach kurzer "
                             "Wartezeit den Skalier-Hotkey. In Lossless Scaling Frame Generation auf LSFG "
-                            "stellen und den Scaling-Typ auf „Off“, da LumaCast bereits hochskaliert.")
+                            "stellen und den Scaling-Typ auf „Off“, da LumaCast bereits hochskaliert. "
+                            "Bei 30-FPS-Spielen sendet die Konsole jedes Bild doppelt (60 Hz). LumaCast "
+                            "überspringt die Duplikate, damit Lossless Scaling echte 30 FPS sieht und daraus "
+                            "60 (X2) oder 120 (X4) macht. „Spiel-FPS“ im Overlay (F1) zeigt die echte Bildrate.")
         self.switch(sec, "Aktiv", "framegen", "lossless", "Lossless Scaling mit dem Profil starten")
         ent, r = self.entry(sec, "Pfad", "framegen", "ls_path", width=420)
         ctk.CTkButton(sec, text="…", width=40, fg_color="#2b303b", hover_color="#3a404d",
@@ -432,6 +435,8 @@ class App(ctk.CTk):
         self.ls_status.grid(row=sec._next_row, column=1, columnspan=2, padx=(0, 16), sticky="w")
         sec._next_row += 1
         self.switch(sec, "Hotkey senden", "framegen", "send_hotkey", "Skalieren automatisch auslösen")
+        self.switch(sec, "Duplikate überspringen", "output", "skip_duplicates",
+                    "wichtig bei 30-FPS-Spielen: nur echte neue Bilder ausgeben")
         self.entry(sec, "Hotkey", "framegen", "hotkey", width=180)
         self.slider(sec, "Wartezeit", "framegen", "delay", 0.5, 10.0, steps=19, fmt="{:.1f} s", cast=float)
         self.refreshers.append(self.update_ls_status)
@@ -635,6 +640,7 @@ class App(ctk.CTk):
                 elif kind == "stats":
                     self.stats_label.configure(
                         text=f"Eingang {msg['src']} · {msg['cap_fps']} FPS ({msg['info']})   │   "
+                             f"Spiel {msg.get('game_fps', '?')} FPS   │   "
                              f"Ausgabe {msg['out_fps']} FPS   │   Latenz {msg['latency']} ms   │   "
                              f"verworfen {msg['dropped']}")
                 elif kind in ("error", "warning"):

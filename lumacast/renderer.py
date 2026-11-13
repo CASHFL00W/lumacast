@@ -71,6 +71,23 @@ class AutoTuner:
         self.gamma += (target[2] - self.gamma) * a
 
 
+class DuplicateDetector:
+    """Erkennt doppelte Frames (z. B. 30-FPS-Spiel in 60-Hz-Signal)."""
+
+    def __init__(self):
+        self.prev = None
+
+    def is_duplicate(self, frame: np.ndarray) -> bool:
+        import cv2
+        small = cv2.resize(frame, (240, 135), interpolation=cv2.INTER_AREA)
+        gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
+        prev, self.prev = self.prev, gray
+        if prev is None or prev.shape != gray.shape:
+            return False
+        changed = int(np.count_nonzero(cv2.absdiff(gray, prev) > 10))
+        return changed < 3
+
+
 def dest_rect(mode: str, src_w: int, src_h: int, win_w: int, win_h: int):
     """Liefert (x, y, w, h) des Bildbereichs und uv-Rechteck (Zuschnitt)."""
     uv = (0.0, 0.0, 1.0, 1.0)
@@ -155,6 +172,7 @@ class Renderer:
         self.running = True
         self.windowed = False
         self.autotune = AutoTuner()
+        self.dups = DuplicateDetector()
         self.audio = None
         self.overlay_dirty = True
 
@@ -432,7 +450,7 @@ class Renderer:
                 new = cmd["profile"]
                 for section in ("image", "upscale"):
                     self.profile[section] = copy.deepcopy(new[section])
-                for key in ("scale_mode", "esc_closes"):
+                for key in ("scale_mode", "esc_closes", "skip_duplicates"):
                     self.profile["output"][key] = new["output"].get(key)
                 if new["output"].get("overlay") != self.profile["output"].get("overlay"):
                     self.profile["output"]["overlay"] = new["output"].get("overlay")
@@ -486,6 +504,8 @@ class Renderer:
         glfw = self.glfw
         last_seq = -1
         out_frames = 0
+        unique_frames = 0
+        game_fps = 0.0
         dropped = 0
         lat_sum = 0.0
         lat_n = 0
@@ -522,8 +542,15 @@ class Renderer:
                 if last_seq >= 0 and seq - last_seq > 1:
                     dropped += seq - last_seq - 1
                 last_seq = seq
+                duplicate = self.dups.is_duplicate(frame)
+                if not duplicate:
+                    unique_frames += 1
+                elif self.profile["output"].get("skip_duplicates", True):
+                    # Nichts Neues im Bild -> nicht erneut ausgeben. So sieht Lossless Scaling
+                    # die echte Spiel-Bildrate (z. B. 30) und berechnet saubere Zwischenbilder.
+                    new = False
                 img = self.profile["image"]
-                if not self.force_original and img.get("mode") in ("auto", "hybrid"):
+                if new and not self.force_original and img.get("mode") in ("auto", "hybrid"):
                     self.autotune.update(frame, img.get("input_range") == "limited",
                                          img.get("auto_strength", 60) / 100.0)
 
@@ -531,12 +558,15 @@ class Renderer:
             if now - stat_t >= 0.5:
                 out_fps = out_frames / (now - stat_t)
                 latency_ms = (lat_sum / lat_n * 1000.0) if lat_n else 0.0
+                game_fps = unique_frames / (now - stat_t)
+                self.game_fps = game_fps
+                unique_frames = 0
                 out_frames = 0
                 lat_sum = 0.0
                 lat_n = 0
                 stat_t = now
                 stats = {
-                    "cap_fps": round(cap.fps, 1), "out_fps": round(out_fps, 1),
+                    "cap_fps": round(cap.fps, 1), "game_fps": round(game_fps, 1), "out_fps": round(out_fps, 1),
                     "latency": round(latency_ms, 1), "dropped": dropped,
                     "src": f"{cap.size[0]}x{cap.size[1]}", "info": cap.info,
                 }
@@ -578,7 +608,9 @@ class Renderer:
             lines = [
                 f"{APP_NAME}",
                 f"Eingang   {cap.size[0]}x{cap.size[1]}  {cap.fps:5.1f} FPS  ({cap.info})",
-                f"Ausgabe   {win_w}x{win_h}  {out_fps:5.1f} FPS",
+                f"Spiel     {getattr(self, 'game_fps', 0.0):5.1f} FPS (echte neue Bilder)",
+                f"Ausgabe   {win_w}x{win_h}  {out_fps:5.1f} FPS"
+                + ("  (Duplikate übersprungen)" if self.profile["output"].get("skip_duplicates", True) else ""),
                 f"Latenz    {latency_ms:4.1f} ms (Programm)   verworfen: {dropped}",
                 f"Skalierung {UPSCALER_LABELS.get(up.get('method'), '?')}  Schärfe {up.get('sharpness', 0)}",
                 f"Bild      {MODE_LABELS.get(mode, mode)}",

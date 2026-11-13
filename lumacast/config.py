@@ -9,7 +9,7 @@ import uuid
 from pathlib import Path
 
 APP_NAME = "LumaCast"
-APP_VERSION = "1.0.0"
+APP_VERSION = "1.0.1"
 
 TEST_PATTERN = "Testbild (ohne Capture-Karte)"
 DEFAULT_AUDIO = "Standard"
@@ -31,6 +31,7 @@ DEFAULT_PROFILE: dict = {
         "vsync": False,
         "overlay": False,
         "esc_closes": True,
+        "skip_duplicates": True,  # doppelte Frames nicht erneut ausgeben
     },
     "upscale": {
         "method": "lanczos",    # nearest, bilinear, bicubic, lanczos

@@ -20,6 +20,8 @@ Unter **Releases** → `LumaCast.exe` herunterladen und starten. Keine Installat
   (separat zu kaufen): LumaCast findet es automatisch, startet es mit und löst den Skalier-Hotkey aus.
 - **Info-Overlay** mit Eingangs-/Ausgabe-FPS, Latenz und verworfenen Frames.
 - **Testbild**, um alles ohne Capture-Karte auszuprobieren.
+- **Updates direkt im Programm:** LumaCast prüft beim Start auf neue Versionen und aktualisiert sich mit einem Klick.
+- Startet im **Fenster**; F11 oder Doppelklick wechselt ins Vollbild (Vollbild-Start im Reiter *Ausgabe* einstellbar).
 
 ## Tasten im Ausgabefenster
 | Taste | Funktion |
@@ -29,7 +31,7 @@ Unter **Releases** → `LumaCast.exe` herunterladen und starten. Keine Installat
 | F3 | Skalierungsverfahren durchschalten |
 | F4 | Bildbearbeitung kurz aus |
 | F5 | Schärfe in Stufen |
-| F11 | Fenster / Vollbild |
+| F11 / Doppelklick | Fenster ↔ Vollbild |
 | Esc | Ausgabe beenden |
 
 ## Tipps

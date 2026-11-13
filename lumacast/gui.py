@@ -10,7 +10,9 @@ from tkinter import filedialog, messagebox
 
 import customtkinter as ctk
 
-from . import audio, capture, config, lossless
+import threading
+
+from . import audio, capture, config, lossless, updater
 from .config import APP_NAME, APP_VERSION, DEFAULT_AUDIO, TEST_PATTERN
 
 ACCENT = "#f5a524"
@@ -76,7 +78,12 @@ class App(ctk.CTk):
         self.build()
         self.load_profile_into_ui()
         self.protocol("WM_DELETE_WINDOW", self.on_close)
+        self.ui_q: queue.Queue = queue.Queue()
+        self.update_info = None
+        self.updating = False
+        updater.cleanup_leftovers()
         self.after(150, self.poll_status)
+        self.after(2500, lambda: self.check_updates(manual=False))
 
     # ============================================================== Daten
     def _active_profile(self) -> dict:
@@ -106,11 +113,11 @@ class App(ctk.CTk):
     # ============================================================== Aufbau
     def build(self):
         self.grid_columnconfigure(1, weight=1)
-        self.grid_rowconfigure(0, weight=1)
+        self.grid_rowconfigure(1, weight=1)
 
         # ---------------- Seitenleiste
         side = ctk.CTkFrame(self, width=240, corner_radius=0)
-        side.grid(row=0, column=0, rowspan=2, sticky="nsw")
+        side.grid(row=0, column=0, rowspan=3, sticky="nsw")
         side.grid_propagate(False)
         side.grid_rowconfigure(3, weight=1)
         ctk.CTkLabel(side, text=APP_NAME, font=ctk.CTkFont(size=28, weight="bold"),
@@ -127,10 +134,34 @@ class App(ctk.CTk):
                                         ("Löschen", self.delete_profile))):
             ctk.CTkButton(btns, text=txt, width=66, height=30, command=cmd,
                           fg_color="#2b303b", hover_color="#3a404d").grid(row=0, column=i, padx=3)
+        upd = ctk.CTkFrame(side, fg_color="transparent")
+        upd.grid(row=5, column=0, padx=14, pady=(0, 16), sticky="ew")
+        ctk.CTkLabel(upd, text=f"Version {APP_VERSION}", text_color=MUTED,
+                     font=ctk.CTkFont(size=12)).pack(anchor="w", padx=4)
+        self.check_btn = ctk.CTkButton(upd, text="Nach Updates suchen", height=30, fg_color="#2b303b",
+                                       hover_color="#3a404d", command=lambda: self.check_updates(manual=True))
+        self.check_btn.pack(fill="x", pady=(4, 0))
+
+        # ---------------- Update-Hinweis (versteckt, bis ein Update da ist)
+        self.banner = ctk.CTkFrame(self, fg_color="#3a2f12", corner_radius=12, border_width=1,
+                                   border_color=ACCENT)
+        self.banner.grid_columnconfigure(0, weight=1)
+        self.banner_label = ctk.CTkLabel(self.banner, text="", anchor="w", justify="left",
+                                         font=ctk.CTkFont(size=14, weight="bold"))
+        self.banner_label.grid(row=0, column=0, padx=16, pady=(12, 4), sticky="ew")
+        self.banner_progress = ctk.CTkProgressBar(self.banner, progress_color=ACCENT)
+        self.banner_progress.set(0)
+        self.banner_btn = ctk.CTkButton(self.banner, text="Jetzt aktualisieren", width=170, height=34,
+                                        fg_color=ACCENT, hover_color=ACCENT_HOVER, text_color="#111111",
+                                        font=ctk.CTkFont(weight="bold"), command=self.start_update)
+        self.banner_btn.grid(row=0, column=1, rowspan=2, padx=(8, 6), pady=12)
+        self.banner_later = ctk.CTkButton(self.banner, text="Später", width=80, height=34, fg_color="#2b303b",
+                                          hover_color="#3a404d", command=self.banner.grid_remove)
+        self.banner_later.grid(row=0, column=2, rowspan=2, padx=(0, 14), pady=12)
 
         # ---------------- Hauptbereich
         main = ctk.CTkFrame(self, fg_color="transparent")
-        main.grid(row=0, column=1, sticky="nsew", padx=18, pady=(16, 6))
+        main.grid(row=1, column=1, sticky="nsew", padx=18, pady=(16, 6))
         main.grid_columnconfigure(0, weight=1)
         main.grid_rowconfigure(1, weight=1)
 
@@ -163,7 +194,7 @@ class App(ctk.CTk):
 
         # ---------------- Fußleiste
         bar = ctk.CTkFrame(self, fg_color=CARD, corner_radius=12)
-        bar.grid(row=1, column=1, sticky="ew", padx=18, pady=(4, 16))
+        bar.grid(row=2, column=1, sticky="ew", padx=18, pady=(4, 16))
         bar.grid_columnconfigure(1, weight=1)
         self.start_btn = ctk.CTkButton(bar, text="▶  Start", width=190, height=46,
                                        font=ctk.CTkFont(size=16, weight="bold"),
@@ -403,16 +434,18 @@ class App(ctk.CTk):
     def build_output(self, tab):
         tab.grid_columnconfigure(0, weight=1)
         sec = self._section(tab, "Bildschirm", 0,
-                            "Die Ausgabe öffnet sich als randloses Vollbildfenster auf dem gewählten Monitor.")
+                            "Die Ausgabe öffnet sich auf dem gewählten Monitor – im Fenster oder als randloses Vollbild.")
         self.option(sec, "Monitor", "output", "monitor", None,
                     getter_choices=lambda: list(enumerate(self.monitors)), width=420)
         self.switch(sec, "VSync", "output", "vsync", "aus = geringste Latenz (ideal mit G-Sync/FreeSync)")
+        self.switch(sec, "Im Vollbild starten", "output", "start_fullscreen",
+                    "aus = startet im Fenster · F11 oder Doppelklick wechselt jederzeit")
         self.switch(sec, "Info-Overlay", "output", "overlay", "FPS, Latenz und Auflösung einblenden")
         self.switch(sec, "Esc beendet", "output", "esc_closes")
         sec2 = self._section(tab, "Tasten im Ausgabefenster", 1)
         keys = ("F1  Info-Overlay ein/aus\nF2  Vergleich: links Original, rechts bearbeitet\n"
                 "F3  Skalierung durchschalten\nF4  Bildbearbeitung kurz aus (Original)\n"
-                "F5  Schärfe in Stufen\nF11 Fenster / Vollbild\nEsc Ausgabe beenden")
+                "F5  Schärfe in Stufen\nF11 / Doppelklick  Fenster ↔ Vollbild\nEsc Ausgabe beenden")
         ctk.CTkLabel(sec2, text=keys, justify="left", font=ctk.CTkFont(family="Consolas", size=13)).grid(
             row=2, column=0, columnspan=3, padx=16, pady=(0, 14), sticky="w")
 
@@ -628,6 +661,15 @@ class App(ctk.CTk):
         self.status_label.configure(text=text, text_color="#ff6b6b" if error else ("#1a1a1a", "#e6e8ee"))
 
     def poll_status(self):
+        while True:
+            try:
+                fn = self.ui_q.get_nowait()
+            except queue.Empty:
+                break
+            try:
+                fn()
+            except Exception as exc:  # noqa: BLE001
+                self.set_status(f"Fehler: {exc}", error=True)
         if self.status_q is not None:
             while True:
                 try:
@@ -661,6 +703,93 @@ class App(ctk.CTk):
             self.running_profile = None
             self.start_btn.configure(text="▶  Start", fg_color=GREEN, hover_color=GREEN_HOVER, text_color="#ffffff")
         self.after(150, self.poll_status)
+
+    # ============================================================ Updates
+    def check_updates(self, manual: bool):
+        if self.updating:
+            return
+        if manual:
+            self.check_btn.configure(state="disabled", text="Suche …")
+
+        def work():
+            try:
+                info = updater.check()
+                self.ui_q.put(lambda: self._on_check(info, manual, None))
+            except Exception as exc:  # noqa: BLE001
+                self.ui_q.put(lambda e=exc: self._on_check(None, manual, e))
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _on_check(self, info, manual, error):
+        self.check_btn.configure(state="normal", text="Nach Updates suchen")
+        if error is not None:
+            if manual:
+                self.set_status(f"Update-Prüfung fehlgeschlagen: {error}", error=True)
+            return
+        if info is None:
+            if manual:
+                self.set_status(f"Du hast die neueste Version ({APP_VERSION}).")
+            return
+        self.update_info = info
+        self.banner_label.configure(text=f"Neue Version {info['version']} verfügbar (du hast {APP_VERSION}).")
+        if updater.can_self_update():
+            self.banner_btn.configure(text="Jetzt aktualisieren", command=self.start_update, state="normal")
+        else:
+            self.banner_btn.configure(text="Download-Seite", state="normal",
+                                      command=lambda: updater.open_release_page(info["page"]))
+        self.banner.grid(row=0, column=1, sticky="ew", padx=18, pady=(16, 0))
+
+    def start_update(self):
+        info = self.update_info
+        if not info or self.updating:
+            return
+        if self.is_running():
+            self.stop(wait=True)
+        self.updating = True
+        self.cancel_update = False
+        self.banner_btn.configure(state="disabled", text="Lade …")
+        self.banner_later.configure(text="Abbrechen", command=self._cancel_update)
+        self.banner_progress.set(0)
+        self.banner_progress.grid(row=1, column=0, padx=16, pady=(0, 12), sticky="ew")
+        self.start_btn.configure(state="disabled")
+
+        def progress(done, total):
+            frac = done / total if total else 0
+            mb = done / 1_048_576
+            self.ui_q.put(lambda: (self.banner_progress.set(frac),
+                                   self.banner_label.configure(
+                                       text=f"Lade Version {info['version']} … {mb:.0f} MB"
+                                            + (f" von {total / 1_048_576:.0f} MB" if total else ""))))
+
+        def work():
+            try:
+                path = updater.download(info, progress, lambda: self.cancel_update)
+                self.ui_q.put(lambda: self._finish_update(path))
+            except Exception as exc:  # noqa: BLE001
+                self.ui_q.put(lambda e=exc: self._update_failed(e))
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _cancel_update(self):
+        self.cancel_update = True
+
+    def _update_failed(self, exc):
+        self.updating = False
+        self.start_btn.configure(state="normal")
+        self.banner_progress.grid_remove()
+        self.banner_btn.configure(state="normal", text="Erneut versuchen")
+        self.banner_later.configure(text="Später", command=self.banner.grid_remove)
+        self.banner_label.configure(text=f"Update fehlgeschlagen: {exc}")
+
+    def _finish_update(self, path):
+        self.banner_label.configure(text="Update geladen – LumaCast startet neu …")
+        self.banner_progress.set(1)
+        try:
+            updater.install_and_restart(path)
+        except Exception as exc:  # noqa: BLE001
+            self._update_failed(exc)
+            return
+        self.after(400, self.on_close)
 
     def on_close(self):
         self.stop(wait=True)

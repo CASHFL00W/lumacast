@@ -208,23 +208,54 @@ class Renderer:
         glfw.window_hint(glfw.CONTEXT_VERSION_MINOR, 3)
         glfw.window_hint(glfw.OPENGL_PROFILE, glfw.OPENGL_CORE_PROFILE)
         glfw.window_hint(glfw.OPENGL_FORWARD_COMPAT, True)
-        glfw.window_hint(glfw.DECORATED, False)
+        fullscreen = bool(self.profile["output"].get("start_fullscreen", False))
+        self.windowed = not fullscreen
+        ww, wh = self._window_size()
+        glfw.window_hint(glfw.DECORATED, not fullscreen)
+        glfw.window_hint(glfw.RESIZABLE, True)
         glfw.window_hint(glfw.AUTO_ICONIFY, False)
         glfw.window_hint(glfw.FOCUS_ON_SHOW, True)
         glfw.window_hint(glfw.VISIBLE, False)
-        win = glfw.create_window(mw, mh, f"{APP_NAME} – Ausgabe", None, None)
+        size = (mw, mh) if fullscreen else (ww, wh)
+        win = glfw.create_window(size[0], size[1], f"{APP_NAME} – Ausgabe", None, None)
         if not win:
             raise RuntimeError("Ausgabefenster konnte nicht erstellt werden (OpenGL 3.3 nötig).")
-        glfw.set_window_pos(win, mx, my)
+        if fullscreen:
+            glfw.set_window_pos(win, mx, my)
+        else:
+            glfw.set_window_pos(win, mx + (mw - ww) // 2, my + (mh - wh) // 2)
         glfw.make_context_current(win)
         glfw.swap_interval(1 if self.profile["output"].get("vsync") else 0)
-        glfw.set_input_mode(win, glfw.CURSOR, glfw.CURSOR_HIDDEN)
+        glfw.set_input_mode(win, glfw.CURSOR, glfw.CURSOR_HIDDEN if fullscreen else glfw.CURSOR_NORMAL)
         glfw.set_key_callback(win, self.on_key)
+        glfw.set_mouse_button_callback(win, self.on_mouse)
         glfw.set_framebuffer_size_callback(win, lambda *_: self._mark_resize())
         glfw.show_window(win)
         glfw.focus_window(win)
         self.glfw = glfw
         self.win = win
+
+    def _window_size(self):
+        """16:9-Fenster mit ca. 70 % der Monitorbreite."""
+        _mx, _my, mw, mh = self.monitor_rect
+        w = int(mw * 0.7)
+        h = int(w * 9 / 16)
+        if h > mh * 0.8:
+            h = int(mh * 0.8)
+            w = int(h * 16 / 9)
+        return w, h
+
+    def on_mouse(self, win, button, action, _mods):
+        glfw = self.glfw
+        if button != glfw.MOUSE_BUTTON_LEFT or action != glfw.PRESS:
+            return
+        now = time.perf_counter()
+        if now - getattr(self, "_last_click", 0.0) < 0.35:
+            self._last_click = 0.0
+            self.toggle_windowed()
+            self.dirty = True
+        else:
+            self._last_click = now
 
     def _mark_resize(self):
         self.dirty = True
@@ -316,7 +347,7 @@ class Renderer:
         mx, my, mw, mh = self.monitor_rect
         self.windowed = not self.windowed
         if self.windowed:
-            w, h = int(mw * 0.6), int(mh * 0.6)
+            w, h = self._window_size()
             glfw.set_window_attrib(self.win, glfw.DECORATED, True)
             glfw.set_window_size(self.win, w, h)
             glfw.set_window_pos(self.win, mx + (mw - w) // 2, my + (mh - h) // 2)
@@ -615,7 +646,7 @@ class Renderer:
                 f"Skalierung {UPSCALER_LABELS.get(up.get('method'), '?')}  Schärfe {up.get('sharpness', 0)}",
                 f"Bild      {MODE_LABELS.get(mode, mode)}",
                 f"GPU       {self.gpu_name}",
-                "F1 Info  F2 Vergleich  F3 Skalierung  F4 Original  F5 Schärfe  F11 Fenster  Esc Ende",
+                "F1 Info  F2 Vergleich  F3 Skalierung  F4 Original  F5 Schärfe  F11/Doppelklick Vollbild  Esc Ende",
             ]
             if audio_note:
                 lines.append(f"Audio     {audio_note}")

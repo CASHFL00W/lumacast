@@ -1,0 +1,70 @@
+name: Windows-Build
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Abhängigkeiten installieren
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pyinstaller
+
+      - name: Selbsttest (Python)
+        run: |
+          python main.py --selftest
+          Get-Content selftest.txt
+          if (-not (Select-String -Path selftest.txt -Pattern "SELFTEST OK" -Quiet)) { exit 1 }
+          Remove-Item selftest.txt
+
+      - name: EXE bauen
+        run: >
+          pyinstaller --noconfirm --onefile --windowed
+          --name LumaCast
+          --icon assets/icon.ico
+          --add-data "assets;assets"
+          --collect-all customtkinter
+          --collect-all glfw
+          --collect-all glcontext
+          --collect-all moderngl
+          --collect-all sounddevice
+          --collect-all _sounddevice_data
+          --collect-submodules pygrabber
+          main.py
+
+      - name: Selbsttest (EXE)
+        run: |
+          $p = Start-Process -FilePath "dist\LumaCast.exe" -ArgumentList "--selftest" -PassThru
+          if (-not $p.WaitForExit(90000)) { $p.Kill(); Write-Error "EXE hängt"; exit 1 }
+          Get-Content selftest.txt
+          if (-not (Select-String -Path selftest.txt -Pattern "SELFTEST OK" -Quiet)) { exit 1 }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LumaCast
+          path: dist/LumaCast.exe
+
+      - name: Release veröffentlichen
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/LumaCast.exe
+          name: LumaCast ${{ github.ref_name }}
+          body: |
+            **Download:** `LumaCast.exe` unten bei *Assets* herunterladen und starten – keine Installation nötig.
+
+            Windows zeigt beim ersten Start evtl. „Der Computer wurde durch Windows geschützt“ an → *Weitere Informationen* → *Trotzdem ausführen*.

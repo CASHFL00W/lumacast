@@ -1,0 +1,8 @@
+numpy>=1.26
+opencv-python-headless==4.10.0.84
+moderngl>=5.10,<6
+glfw>=2.7
+customtkinter==5.2.2
+pillow>=10.1
+sounddevice>=0.4.6
+pygrabber==0.2; sys_platform == "win32"
